@@ -275,8 +275,8 @@ function scheduler() {
       const v = pattern[t][step];
       if (v === 0) continue;
       if (drumMode) {
-        if (v === 1) playClap(nextNoteTime);
-        else playKick(nextNoteTime);
+        if (v === 1) playKick(nextNoteTime);
+        else playClap(nextNoteTime);
       } else {
         playNote(v === 1 ? 'sine' : 'square', FREQS[t], nextNoteTime, dur * 0.9);
       }
