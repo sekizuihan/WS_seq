@@ -118,10 +118,7 @@
     <button id="playBtn">▶ 再生</button>
     <button id="modeBtn" class="loop">ループ</button>
     <button id="soundBtn">シンセ</button>
-    <div class="tempo">
-      BPM <input id="bpm" type="range" min="60" max="200" value="120">
-      <span id="bpmVal">120</span>
-    </div>
+    <div class="tempo">BPM 140</div>
   </div>
   <div class="grid" id="grid"></div>
   <div class="legend">
@@ -252,17 +249,10 @@ let loopMode = true;
 let currentStep = 0;
 let nextNoteTime = 0;
 let timerId = null;
-let bpm = 120;
+const bpm = 140;
 
 const playBtn = document.getElementById('playBtn');
 const modeBtn = document.getElementById('modeBtn');
-const bpmSlider = document.getElementById('bpm');
-const bpmVal = document.getElementById('bpmVal');
-
-bpmSlider.addEventListener('input', () => {
-  bpm = +bpmSlider.value;
-  bpmVal.textContent = bpm;
-});
 
 function stepDur() { return 60 / bpm / 2; } // 8分音符
 
