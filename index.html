@@ -117,6 +117,7 @@
   <div class="controls">
     <button id="playBtn">▶ 再生</button>
     <button id="modeBtn" class="loop">ループ</button>
+    <button id="soundBtn">シンセ</button>
     <div class="tempo">
       BPM <input id="bpm" type="range" min="60" max="200" value="120">
       <span id="bpmVal">120</span>
@@ -124,9 +125,9 @@
   </div>
   <div class="grid" id="grid"></div>
   <div class="legend">
-    <span><span class="dot" style="background:var(--cell)"></span>0 = 無音</span>
-    <span><span class="dot" style="background:var(--sine)"></span>1 = 正弦波</span>
-    <span><span class="dot" style="background:var(--square)"></span>2 = 矩形波</span>
+    <span><span class="dot" style="background:var(--cell)"></span>0 = スキップ</span>
+    <span><span class="dot" style="background:var(--sine)"></span>1 = 片足</span>
+    <span><span class="dot" style="background:var(--square)"></span>2 = 両足</span>
   </div>
 </div>
 
@@ -203,6 +204,48 @@ function playNote(type, freq, time, dur) {
   osc.stop(time + dur + 0.01);
 }
 
+// クラップ: ノイズをバンドパスに通し、短い3連バーストで鳴らす
+function playClap(time) {
+  const ac = getCtx();
+  const dur = 0.2;
+  const buf = ac.createBuffer(1, ac.sampleRate * dur, ac.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+  const src = ac.createBufferSource();
+  src.buffer = buf;
+  const bp = ac.createBiquadFilter();
+  bp.type = 'bandpass';
+  bp.frequency.value = 1500;
+  bp.Q.value = 1.2;
+  const gain = ac.createGain();
+  gain.gain.setValueAtTime(0, time);
+  // 3連バーストで「パチッ」とした手拍子感を出す
+  [0, 0.01, 0.02].forEach(off => {
+    gain.gain.setValueAtTime(0.5, time + off);
+    gain.gain.exponentialRampToValueAtTime(0.1, time + off + 0.009);
+  });
+  gain.gain.setValueAtTime(0.4, time + 0.03);
+  gain.gain.exponentialRampToValueAtTime(0.001, time + dur);
+  src.connect(bp).connect(gain).connect(ac.destination);
+  src.start(time);
+  src.stop(time + dur);
+}
+
+// バスドラム: 正弦波のピッチを急降下させる
+function playKick(time) {
+  const ac = getCtx();
+  const osc = ac.createOscillator();
+  const gain = ac.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(150, time);
+  osc.frequency.exponentialRampToValueAtTime(45, time + 0.12);
+  gain.gain.setValueAtTime(0.8, time);
+  gain.gain.exponentialRampToValueAtTime(0.001, time + 0.3);
+  osc.connect(gain).connect(ac.destination);
+  osc.start(time);
+  osc.stop(time + 0.32);
+}
+
 // --- シーケンサー ---
 let playing = false;
 let loopMode = true;
@@ -240,8 +283,13 @@ function scheduler() {
     for (let t = 0; t < TRACKS; t++) {
       if (!trackOn[t]) continue;
       const v = pattern[t][step];
-      if (v === 1) playNote('sine', FREQS[t], nextNoteTime, dur * 0.9);
-      else if (v === 2) playNote('square', FREQS[t], nextNoteTime, dur * 0.9);
+      if (v === 0) continue;
+      if (drumMode) {
+        if (v === 1) playClap(nextNoteTime);
+        else playKick(nextNoteTime);
+      } else {
+        playNote(v === 1 ? 'sine' : 'square', FREQS[t], nextNoteTime, dur * 0.9);
+      }
     }
     const delay = Math.max(0, (nextNoteTime - ac.currentTime) * 1000);
     setTimeout(() => { if (playing) highlight(step); }, delay);
@@ -279,6 +327,13 @@ function stop() {
 }
 
 playBtn.addEventListener('click', () => playing ? stop() : start());
+
+let drumMode = false;
+const soundBtn = document.getElementById('soundBtn');
+soundBtn.addEventListener('click', () => {
+  drumMode = !drumMode;
+  soundBtn.textContent = drumMode ? 'ドラム' : 'シンセ';
+});
 
 modeBtn.addEventListener('click', () => {
   loopMode = !loopMode;
