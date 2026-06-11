@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WS Sequencer Synth</title>
+<style>
+  :root {
+    --bg: #14161c;
+    --panel: #1e2129;
+    --cell: #2a2e3a;
+    --sine: #4fc3f7;
+    --square: #ffb74d;
+    --accent: #7c6cf0;
+    --text: #e6e8ee;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Helvetica Neue", Arial, sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    padding: 8px;
+  }
+  .app {
+    background: var(--panel);
+    padding: 28px;
+    border-radius: 16px;
+    box-shadow: 0 8px 32px rgba(0,0,0,.5);
+    width: min(640px, 100%);
+  }
+  h1 {
+    margin: 0 0 18px;
+    font-size: 18px;
+    letter-spacing: 2px;
+    font-weight: 600;
+    color: #aab;
+  }
+  .controls {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 20px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  button {
+    background: var(--cell);
+    color: var(--text);
+    border: 1px solid #3a3f4e;
+    border-radius: 8px;
+    padding: 10px 22px;
+    font-size: 14px;
+    cursor: pointer;
+    transition: background .15s;
+    touch-action: manipulation;
+  }
+  button:hover { background: #353a48; }
+  #playBtn.playing { background: var(--accent); border-color: var(--accent); }
+  #modeBtn.loop { color: var(--sine); }
+  #modeBtn.oneshot { color: var(--square); }
+  .tempo { margin-left: auto; font-size: 13px; color: #99a; display: flex; align-items: center; gap: 8px; }
+  .grid { display: grid; grid-template-columns: minmax(48px, 60px) repeat(8, 1fr); gap: 8px; }
+  .track-label {
+    display: flex; align-items: center; font-size: 13px; color: #99a;
+  }
+  .track-btn {
+    width: 100%; height: 52px; padding: 0;
+    font-size: 12px; line-height: 1.3;
+    border-radius: 8px;
+  }
+  .track-btn.on { background: #2e7d52; border-color: #2e7d52; color: #eafff3; }
+  .track-btn.off { color: #667; }
+  .cell.cell-off { opacity: 0.35; }
+  .cell {
+    width: 100%; aspect-ratio: 1; max-width: 52px; max-height: 52px;
+    justify-self: center;
+    border-radius: 8px;
+    background: var(--cell);
+    border: 1px solid #3a3f4e;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; font-weight: 700;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+    transition: background .1s, box-shadow .1s;
+  }
+  .cell[data-val="1"] { background: var(--sine); color: #07232f; border-color: var(--sine); }
+  .cell[data-val="2"] { background: var(--square); color: #3a2400; border-color: var(--square); }
+  .cell.current { box-shadow: 0 0 0 3px var(--accent); }
+  .step-head {
+    text-align: center; font-size: 11px; color: #667;
+    align-self: end; padding-bottom: 2px;
+  }
+  .legend { margin-top: 16px; font-size: 12px; color: #889; }
+  .legend span { margin-right: 16px; white-space: nowrap; }
+  @media (max-width: 480px) {
+    .app { padding: 14px; }
+    .grid { gap: 4px; grid-template-columns: minmax(44px, 52px) repeat(8, 1fr); }
+    .cell { font-size: 14px; border-radius: 6px; }
+    .track-btn { height: 100%; min-height: 36px; font-size: 10px; }
+    .tempo { margin-left: 0; width: 100%; }
+    .tempo input { flex: 1; }
+    button { padding: 10px 16px; }
+  }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <h1>WS SEQUENCER</h1>
+  <div class="controls">
+    <button id="playBtn">▶ 再生</button>
+    <button id="modeBtn" class="loop">ループ</button>
+    <div class="tempo">
+      BPM <input id="bpm" type="range" min="60" max="200" value="120">
+      <span id="bpmVal">120</span>
+    </div>
+  </div>
+  <div class="grid" id="grid"></div>
+  <div class="legend">
+    <span><span class="dot" style="background:var(--cell)"></span>0 = 無音</span>
+    <span><span class="dot" style="background:var(--sine)"></span>1 = 正弦波</span>
+    <span><span class="dot" style="background:var(--square)"></span>2 = 矩形波</span>
+  </div>
+</div>
+
+<script>
+const TRACKS = 2, STEPS = 8;
+// トラックごとの音程(下のトラックほど低い)
+const FREQS = [523.25, 261.63]; // C5, C4
+
+const pattern = Array.from({length: TRACKS}, () => new Array(STEPS).fill(0));
+
+// --- UI 構築 ---
+const grid = document.getElementById('grid');
+grid.appendChild(document.createElement('div')); // 左上の空セル
+for (let s = 0; s < STEPS; s++) {
+  const h = document.createElement('div');
+  h.className = 'step-head';
+  h.textContent = s + 1;
+  grid.appendChild(h);
+}
+const trackOn = new Array(TRACKS).fill(true);
+
+const cells = [];
+for (let t = 0; t < TRACKS; t++) {
+  const label = document.createElement('div');
+  label.className = 'track-label';
+  const btn = document.createElement('button');
+  btn.className = 'track-btn on';
+  btn.innerHTML = 'Track ' + (t + 1) + '<br>ON';
+  btn.addEventListener('click', () => {
+    trackOn[t] = !trackOn[t];
+    btn.className = 'track-btn ' + (trackOn[t] ? 'on' : 'off');
+    btn.innerHTML = 'Track ' + (t + 1) + '<br>' + (trackOn[t] ? 'ON' : 'OFF');
+    cells[t].forEach(c => c.classList.toggle('cell-off', !trackOn[t]));
+  });
+  label.appendChild(btn);
+  grid.appendChild(label);
+  cells[t] = [];
+  for (let s = 0; s < STEPS; s++) {
+    const c = document.createElement('div');
+    c.className = 'cell';
+    c.dataset.val = 0;
+    c.textContent = '';
+    c.addEventListener('click', () => {
+      pattern[t][s] = (pattern[t][s] + 1) % 3;
+      c.dataset.val = pattern[t][s];
+      c.textContent = pattern[t][s] === 0 ? '' : pattern[t][s];
+    });
+    grid.appendChild(c);
+    cells[t][s] = c;
+  }
+}
+
+// --- オーディオ ---
+let ctx = null;
+function getCtx() {
+  if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+  if (ctx.state === 'suspended') ctx.resume();
+  return ctx;
+}
+
+function playNote(type, freq, time, dur) {
+  const ac = getCtx();
+  const osc = ac.createOscillator();
+  const gain = ac.createGain();
+  osc.type = type;
+  osc.frequency.value = freq;
+  const vol = type === 'square' ? 0.12 : 0.2; // 矩形波は音量を抑える
+  gain.gain.setValueAtTime(0, time);
+  gain.gain.linearRampToValueAtTime(vol, time + 0.005);
+  gain.gain.setValueAtTime(vol, time + dur * 0.6);
+  gain.gain.linearRampToValueAtTime(0, time + dur);
+  osc.connect(gain).connect(ac.destination);
+  osc.start(time);
+  osc.stop(time + dur + 0.01);
+}
+
+// --- シーケンサー ---
+let playing = false;
+let loopMode = true;
+let currentStep = 0;
+let nextNoteTime = 0;
+let timerId = null;
+let bpm = 120;
+
+const playBtn = document.getElementById('playBtn');
+const modeBtn = document.getElementById('modeBtn');
+const bpmSlider = document.getElementById('bpm');
+const bpmVal = document.getElementById('bpmVal');
+
+bpmSlider.addEventListener('input', () => {
+  bpm = +bpmSlider.value;
+  bpmVal.textContent = bpm;
+});
+
+function stepDur() { return 60 / bpm / 2; } // 8分音符
+
+function highlight(step) {
+  for (let t = 0; t < TRACKS; t++)
+    for (let s = 0; s < STEPS; s++)
+      cells[t][s].classList.toggle('current', s === step);
+}
+function clearHighlight() {
+  document.querySelectorAll('.cell.current').forEach(c => c.classList.remove('current'));
+}
+
+function scheduler() {
+  const ac = getCtx();
+  while (nextNoteTime < ac.currentTime + 0.1) {
+    const step = currentStep;
+    const dur = stepDur();
+    for (let t = 0; t < TRACKS; t++) {
+      if (!trackOn[t]) continue;
+      const v = pattern[t][step];
+      if (v === 1) playNote('sine', FREQS[t], nextNoteTime, dur * 0.9);
+      else if (v === 2) playNote('square', FREQS[t], nextNoteTime, dur * 0.9);
+    }
+    const delay = Math.max(0, (nextNoteTime - ac.currentTime) * 1000);
+    setTimeout(() => { if (playing) highlight(step); }, delay);
+
+    currentStep++;
+    nextNoteTime += dur;
+    if (currentStep >= STEPS) {
+      if (loopMode) {
+        currentStep = 0;
+      } else {
+        // ワンショット: 最後のステップが鳴り終わったら停止
+        setTimeout(stop, Math.max(0, (nextNoteTime - ac.currentTime) * 1000));
+        return;
+      }
+    }
+  }
+  timerId = setTimeout(scheduler, 25);
+}
+
+function start() {
+  playing = true;
+  currentStep = 0;
+  nextNoteTime = getCtx().currentTime + 0.05;
+  playBtn.classList.add('playing');
+  playBtn.textContent = '■ 停止';
+  scheduler();
+}
+
+function stop() {
+  playing = false;
+  clearTimeout(timerId);
+  playBtn.classList.remove('playing');
+  playBtn.textContent = '▶ 再生';
+  clearHighlight();
+}
+
+playBtn.addEventListener('click', () => playing ? stop() : start());
+
+modeBtn.addEventListener('click', () => {
+  loopMode = !loopMode;
+  modeBtn.textContent = loopMode ? 'ループ' : 'ワンショット';
+  modeBtn.className = loopMode ? 'loop' : 'oneshot';
+});
+</script>
+</body>
+</html>
