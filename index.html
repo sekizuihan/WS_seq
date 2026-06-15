@@ -131,7 +131,7 @@
 <script>
 const TRACKS = 2, STEPS = 8;
 // トラックごとの音程(下のトラックほど低い)
-const FREQS = [523.25, 261.63]; // C5, C4
+const FREQS = [523.25, 783.99]; // C5, G5(トラック1の5度上)
 
 const pattern = Array.from({length: TRACKS}, () => new Array(STEPS).fill(0));
 
@@ -191,7 +191,7 @@ function playNote(type, freq, time, dur) {
   const gain = ac.createGain();
   osc.type = type;
   osc.frequency.value = freq;
-  const vol = type === 'square' ? 0.12 : 0.2; // 矩形波は音量を抑える
+  const vol = type === 'square' ? 0.09 : 0.15; // 矩形波は音量を抑える
   gain.gain.setValueAtTime(0, time);
   gain.gain.linearRampToValueAtTime(vol, time + 0.005);
   gain.gain.setValueAtTime(vol, time + dur * 0.6);
