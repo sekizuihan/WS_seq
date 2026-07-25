@@ -97,6 +97,23 @@
     text-align: center; font-size: 11px; color: #667;
     align-self: end; padding-bottom: 2px;
   }
+  .patterns {
+    margin-top: 18px;
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  }
+  .plabel { font-size: 13px; color: #99a; }
+  .slots { display: flex; gap: 6px; }
+  .slot {
+    width: 34px; height: 34px; border-radius: 6px;
+    background: var(--cell); border: 1px solid #3a3f4e;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; color: #99a; cursor: pointer;
+    touch-action: manipulation;
+  }
+  .slot.filled { color: #fff; }
+  .slot.editing { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .slot.playing { box-shadow: 0 0 0 3px var(--sine); }
+  #chainBtn.playing { background: var(--accent); border-color: var(--accent); }
   .legend { margin-top: 16px; font-size: 12px; color: #889; }
   .legend span { margin-right: 16px; white-space: nowrap; }
   @media (max-width: 480px) {
@@ -118,9 +135,18 @@
     <button id="playBtn">▶ 再生</button>
     <button id="modeBtn" class="loop">ループ</button>
     <button id="soundBtn">シンセ</button>
-    <div class="tempo">BPM 140</div>
+    <div class="tempo">
+      BPM <input id="bpm" type="range" min="60" max="200" value="140">
+      <span id="bpmVal">140</span>
+    </div>
   </div>
   <div class="grid" id="grid"></div>
+  <div class="patterns">
+    <span class="plabel">パターン</span>
+    <div class="slots" id="slots"></div>
+    <button id="chainBtn">チェーン再生</button>
+    <button id="clearBtn">クリア</button>
+  </div>
   <div class="legend">
     <span><span class="dot" style="background:var(--cell)"></span>0 = スキップ</span>
     <span><span class="dot" style="background:var(--sine)"></span>1 = 片足</span>
@@ -133,7 +159,12 @@ const TRACKS = 2, STEPS = 8;
 // トラックごとの音程(下のトラックほど低い)
 const FREQS = [523.25, 783.99]; // C5, G5(トラック1の5度上)
 
-const pattern = Array.from({length: TRACKS}, () => new Array(STEPS).fill(0));
+// 4つのパターンバンク(常に存在し、それぞれ編集可能)
+const savedPatterns = Array.from({length: 4},
+  () => Array.from({length: TRACKS}, () => new Array(STEPS).fill(0)));
+let editSlot = 0;
+let pattern = savedPatterns[editSlot]; // 現在編集中のパターン
+function isEmpty(p) { return p.every(row => row.every(v => v === 0)); }
 
 // --- UI 構築 ---
 const grid = document.getElementById('grid');
@@ -168,9 +199,11 @@ for (let t = 0; t < TRACKS; t++) {
     c.dataset.val = 0;
     c.textContent = '';
     c.addEventListener('click', () => {
+      if (chainMode) return; // チェーン再生中は編集不可
       pattern[t][s] = (pattern[t][s] + 1) % 3;
       c.dataset.val = pattern[t][s];
       c.textContent = pattern[t][s] === 0 ? '' : pattern[t][s];
+      updateSlots();
     });
     grid.appendChild(c);
     cells[t][s] = c;
@@ -246,13 +279,22 @@ function playKick(time) {
 // --- シーケンサー ---
 let playing = false;
 let loopMode = true;
+let chainMode = false;
+let chainIndex = 0;
 let currentStep = 0;
 let nextNoteTime = 0;
 let timerId = null;
-const bpm = 140;
+let bpm = 140;
 
 const playBtn = document.getElementById('playBtn');
 const modeBtn = document.getElementById('modeBtn');
+const bpmSlider = document.getElementById('bpm');
+const bpmVal = document.getElementById('bpmVal');
+
+bpmSlider.addEventListener('input', () => {
+  bpm = +bpmSlider.value;
+  bpmVal.textContent = bpm;
+});
 
 function stepDur() { return 60 / bpm / 2; } // 8分音符
 
@@ -270,9 +312,10 @@ function scheduler() {
   while (nextNoteTime < ac.currentTime + 0.1) {
     const step = currentStep;
     const dur = stepDur();
+    const srcPattern = chainMode ? savedPatterns[chainIndex] : pattern;
     for (let t = 0; t < TRACKS; t++) {
       if (!trackOn[t]) continue;
-      const v = pattern[t][step];
+      const v = srcPattern[t][step];
       if (v === 0) continue;
       if (drumMode) {
         if (v === 1) playKick(nextNoteTime);
@@ -287,7 +330,16 @@ function scheduler() {
     currentStep++;
     nextNoteTime += dur;
     if (currentStep >= STEPS) {
-      if (loopMode) {
+      if (chainMode) {
+        // 次の小節へ:保存パターンを順番に切り替えて連続再生
+        currentStep = 0;
+        chainIndex = (chainIndex + 1) % savedPatterns.length;
+        const idx = chainIndex;
+        const barDelay = Math.max(0, (nextNoteTime - ac.currentTime) * 1000);
+        setTimeout(() => {
+          if (playing) { renderGrid(savedPatterns[idx]); markPlayingSlot(idx); }
+        }, barDelay);
+      } else if (loopMode) {
         currentStep = 0;
       } else {
         // ワンショット: 最後のステップが鳴り終わったら停止
@@ -313,10 +365,84 @@ function stop() {
   clearTimeout(timerId);
   playBtn.classList.remove('playing');
   playBtn.textContent = '▶ 再生';
+  chainBtn.classList.remove('playing');
   clearHighlight();
+  if (chainMode) {
+    chainMode = false;
+    renderGrid(pattern); // 編集中パターンを表示に戻す
+    updateSlots();
+  }
 }
 
-playBtn.addEventListener('click', () => playing ? stop() : start());
+playBtn.addEventListener('click', () => {
+  if (playing) stop();
+  else { chainMode = false; start(); }
+});
+
+// --- パターン選択 / チェーン再生 ---
+const chainBtn = document.getElementById('chainBtn');
+const clearBtn = document.getElementById('clearBtn');
+const slotsEl = document.getElementById('slots');
+
+const slotEls = [];
+for (let i = 0; i < 4; i++) {
+  const s = document.createElement('div');
+  s.className = 'slot';
+  s.textContent = i + 1;
+  s.addEventListener('click', () => selectSlot(i));
+  slotsEl.appendChild(s);
+  slotEls.push(s);
+}
+
+function updateSlots() {
+  slotEls.forEach((el, i) => {
+    el.classList.toggle('editing', i === editSlot && !chainMode);
+    el.classList.toggle('filled', !isEmpty(savedPatterns[i]));
+    el.classList.remove('playing');
+  });
+}
+function markPlayingSlot(idx) {
+  slotEls.forEach((el, i) => el.classList.toggle('playing', i === idx));
+}
+
+// 編集対象のパターンを切り替える
+function selectSlot(i) {
+  if (chainMode) return; // チェーン再生中は切り替えない
+  editSlot = i;
+  pattern = savedPatterns[i];
+  renderGrid(pattern);
+  updateSlots();
+}
+
+// グリッド表示を任意のパターンで描き替える(音の source とは別)
+function renderGrid(p) {
+  for (let t = 0; t < TRACKS; t++)
+    for (let s = 0; s < STEPS; s++) {
+      const v = p[t][s];
+      cells[t][s].dataset.val = v;
+      cells[t][s].textContent = v === 0 ? '' : v;
+    }
+}
+
+clearBtn.addEventListener('click', () => {
+  // 編集中のパターンを空にする
+  for (let t = 0; t < TRACKS; t++) pattern[t].fill(0);
+  renderGrid(pattern);
+  updateSlots();
+});
+
+chainBtn.addEventListener('click', () => {
+  if (playing && chainMode) { stop(); return; }
+  if (playing) stop();
+  chainMode = true;
+  chainIndex = 0;
+  renderGrid(savedPatterns[0]);
+  markPlayingSlot(0);
+  chainBtn.classList.add('playing');
+  start();
+});
+
+updateSlots();
 
 let drumMode = false;
 const soundBtn = document.getElementById('soundBtn');
